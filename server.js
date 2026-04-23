@@ -5157,7 +5157,7 @@ const PORT = process.env.PORT || 3000;
 
 // ====================== SECURITY & CONFIGURATION ======================
 // ⚠️ CRITICAL: Move all API keys to .env file!
-const GROQ_API_KEY = process.env.GROQ_API_KEY || "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";
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "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";
 const SERPAPI_KEY = process.env.SERPAPI_KEY || "00c9a4387fcafade828a6ac5aac8714e024d4e43dd4ee8f1b4d779cd8a0c10d3";
 const RAPID_API_KEY = process.env.RAPID_API_KEY || "c63e325403msh8778b1b6f1e9ef1p16c4bfjsn64db53486227";
 const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || "Dyh7pLfiX-jO-JZPdL3NBrlgjpVzzqyT7OX1IwXe7QA";
