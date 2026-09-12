@@ -2458,119 +2458,137 @@ app.post("/api/travel-memory-builder", async (req, res) => {
 
   try {
     // -----------------------------------------------------------
-    // ANALYZE PHOTOS
-    // -----------------------------------------------------------
-    const scenePromises = moments.map(async (m, i) => {
-      try {
-        // Support normal base64 and data:image/... base64
-        const imageBase64 =
-          m.image_base64 ||
-          m.imageBase64 ||
-          m.base64;
+const scenePromises = moments.map(async (m, i) => {
+  try {
+    const imageBase64 =
+      m.image_base64 ||
+      m.imageBase64 ||
+      m.base64;
 
-        if (!imageBase64) {
-          throw new Error(`Image missing for moment ${i + 1}`);
-        }
+    if (!imageBase64) {
+      throw new Error(`Image missing for moment ${i + 1}`);
+    }
 
-        const cleanBase64 = imageBase64.replace(
-          /^data:image\/[^;]+;base64,/i,
-          ""
-        );
+    const cleanBase64 = imageBase64.replace(
+      /^data:image\/[^;]+;base64,/i,
+      ""
+    );
 
-        const response =
-          await groq.chat.completions.create({
-            model:
-              "meta-llama/llama-4-scout-17b-16e-instruct",
+    console.log(`📸 Analyzing photo ${i + 1}...`);
+    console.log(`📦 Image size: ${cleanBase64.length}`);
 
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: `
-Look at this travel photo and understand the traveler's note.
+    const response = await groq.chat.completions.create({
+      model: "qwen/qwen3.6-27b",
+
+      messages: [
+        {
+          role: "user",
+
+          content: [
+            {
+              type: "text",
+              text: `
+Look carefully at this travel photo.
 
 Traveler's note:
 "${m.user_note || ""}"
 
-Create a personal travel-memory description.
+Create a short personal memory description.
 
 Return JSON only:
-{
-  "mood": "One word",
-  "mood_emoji": "One emoji",
-  "scene_description": "Natural description of the photo",
-  "memory_sentence": "A warm sentence connecting the photo with the traveler's note"
-}
-                    `.trim(),
-                  },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:image/jpeg;base64,${cleanBase64}`,
-                    },
-                  },
-                ],
-              },
-            ],
 
-            response_format: {
-              type: "json_object",
+{
+  "mood": "one word",
+  "mood_emoji": "one emoji",
+  "scene_description": "what is actually visible in the photo",
+  "memory_sentence": "a warm sentence connecting the photo and the traveler's note"
+}
+              `.trim(),
             },
 
-            temperature: 0.5,
-            max_tokens: 180,
-          });
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${cleanBase64}`,
+              },
+            },
+          ],
+        },
+      ],
 
-        const content =
-          response?.choices?.[0]?.message?.content;
+      response_format: {
+        type: "json_object",
+      },
 
-        if (!content) {
-          throw new Error("Empty AI response");
-        }
+      temperature: 0.5,
 
-        const aiData = JSON.parse(content);
-
-        return {
-          index: i,
-          user_note: m.user_note || "",
-
-          mood:
-            aiData.mood || "Happy",
-
-          mood_emoji:
-            aiData.mood_emoji || "✨",
-
-          scene_description:
-            aiData.scene_description ||
-            "A beautiful travel moment.",
-
-          memory_sentence:
-            aiData.memory_sentence ||
-            m.user_note ||
-            "A beautiful memory from the journey.",
-        };
-      } catch (error) {
-        console.error(
-          `Photo ${i + 1} analysis failed:`,
-          error.message
-        );
-
-        return null;
-      }
+      max_completion_tokens: 300,
     });
 
-    const results = await Promise.all(scenePromises);
+    const content =
+      response?.choices?.[0]?.message?.content;
 
-    const scenes = results.filter(Boolean);
-
-    if (scenes.length === 0) {
-      return res.status(500).json({
-        success: false,
-        error: "Unable to analyze the photos",
-      });
+    if (!content) {
+      throw new Error("AI returned empty response");
     }
+
+    console.log(
+      `🤖 Photo ${i + 1} AI response:`,
+      content
+    );
+
+    const aiData = JSON.parse(content);
+
+    return {
+      index: i,
+
+      user_note: m.user_note || "",
+
+      mood: aiData.mood || "Happy",
+
+      mood_emoji:
+        aiData.mood_emoji || "✨",
+
+      scene_description:
+        aiData.scene_description ||
+        "A beautiful travel moment.",
+
+      memory_sentence:
+        aiData.memory_sentence ||
+        m.user_note ||
+        "A beautiful memory from the journey.",
+    };
+  } catch (error) {
+    console.error(
+      `❌ PHOTO ${i + 1} ANALYSIS ERROR`
+    );
+
+    console.error(
+      error?.response?.data ||
+      error?.message ||
+      error
+    );
+
+    return null;
+  }
+});
+
+const results = await Promise.all(scenePromises);
+
+const scenes = results.filter(Boolean);
+
+console.log(
+  `📸 Successfully analyzed ${scenes.length}/${moments.length} photos`
+);
+
+if (scenes.length === 0) {
+  return res.status(500).json({
+    success: false,
+    error: "Unable to analyze photos",
+    details:
+      "The AI vision service could not process the uploaded images.",
+  });
+}
 
     // -----------------------------------------------------------
     // CREATE STORY
