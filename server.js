@@ -2435,88 +2435,288 @@ app.get(
 
 // ═══════════════════════════════════════════════════════════════
 // // ═══════════════════════════════════════════════════════════════
-// // 📖  TRAVEL MEMORY BUILDER
-// // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// 📖 TRAVEL MEMORY BUILDER
+// ═══════════════════════════════════════════════════════════════
+
 app.post("/api/travel-memory-builder", async (req, res) => {
   const { moments } = req.body;
+
   if (!moments || moments.length < 2) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Provide at least 2 moments" });
+    return res.status(400).json({
+      success: false,
+      error: "Provide at least 2 moments",
+    });
   }
+
+  if (!groq) {
+    return res.status(500).json({
+      success: false,
+      error: "Groq AI is not configured",
+    });
+  }
+
   try {
-    const scenePromises = moments.map((m, i) => {
-      const cleanBase64 = m.image_base64.replace(/^data:image\/\w+;base64,/, "");
-      return groq.chat.completions
-        .create({
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `Look at this travel photo. Traveler's note: "${m.user_note}". Return JSON: {"mood":"One word","mood_emoji":"emoji","scene_description":"1 sentence"}`,
-                },
-                {
-                  type: "image_url",
-                  image_url: { url: `data:image/jpeg;base64,${cleanBase64}` },
-                },
-              ],
-            },
-          ],
-          model: "meta-llama/llama-4-scout-17b-16e-instruct",
-          response_format: { type: "json_object" },
-          temperature: 0.4,
-          max_tokens: 80,
-        })
-        .then((r) => ({
-          index: i,
-          user_note: m.user_note,
-          ...JSON.parse(r.choices[0].message.content),
-        }));
-    });
-    const scenes = (await Promise.allSettled(scenePromises))
-      .filter((r) => r.status === "fulfilled")
-      .map((r) => r.value);
-    const storyPrompt = `Create a beautiful travel diary from these moments: ${JSON.stringify(scenes)}.
-Return JSON:
+    // -----------------------------------------------------------
+    // ANALYZE PHOTOS
+    // -----------------------------------------------------------
+    const scenePromises = moments.map(async (m, i) => {
+      try {
+        // Support normal base64 and data:image/... base64
+        const imageBase64 =
+          m.image_base64 ||
+          m.imageBase64 ||
+          m.base64;
+
+        if (!imageBase64) {
+          throw new Error(`Image missing for moment ${i + 1}`);
+        }
+
+        const cleanBase64 = imageBase64.replace(
+          /^data:image\/[^;]+;base64,/i,
+          ""
+        );
+
+        const response =
+          await groq.chat.completions.create({
+            model:
+              "meta-llama/llama-4-scout-17b-16e-instruct",
+
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `
+Look at this travel photo and understand the traveler's note.
+
+Traveler's note:
+"${m.user_note || ""}"
+
+Create a personal travel-memory description.
+
+Return JSON only:
 {
-  "trip_title": "4-6 word evocative title",
-  "travel_story": "5-7 paragraph story weaving the traveler's notes and scene descriptions naturally.",
-  "timeline": [{"moment_index": 0, "social_caption": "Instagram caption with 3 hashtags"}],
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "highlight_quote": "One unforgettable line from the trip"
-}`;
-    const storyRes = await groq.chat.completions.create({
-      messages: [
-        { role: "system", content: "Return JSON only." },
-        { role: "user", content: storyPrompt },
-      ],
-      model: "openai/gpt-oss-120b",
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-      max_tokens: 2500,
+  "mood": "One word",
+  "mood_emoji": "One emoji",
+  "scene_description": "Natural description of the photo",
+  "memory_sentence": "A warm sentence connecting the photo with the traveler's note"
+}
+                    `.trim(),
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: `data:image/jpeg;base64,${cleanBase64}`,
+                    },
+                  },
+                ],
+              },
+            ],
+
+            response_format: {
+              type: "json_object",
+            },
+
+            temperature: 0.5,
+            max_tokens: 180,
+          });
+
+        const content =
+          response?.choices?.[0]?.message?.content;
+
+        if (!content) {
+          throw new Error("Empty AI response");
+        }
+
+        const aiData = JSON.parse(content);
+
+        return {
+          index: i,
+          user_note: m.user_note || "",
+
+          mood:
+            aiData.mood || "Happy",
+
+          mood_emoji:
+            aiData.mood_emoji || "✨",
+
+          scene_description:
+            aiData.scene_description ||
+            "A beautiful travel moment.",
+
+          memory_sentence:
+            aiData.memory_sentence ||
+            m.user_note ||
+            "A beautiful memory from the journey.",
+        };
+      } catch (error) {
+        console.error(
+          `Photo ${i + 1} analysis failed:`,
+          error.message
+        );
+
+        return null;
+      }
     });
-    const finalData = JSON.parse(storyRes.choices[0].message.content);
-    const timeline = scenes.map((s, i) => ({
-      ...s,
-      social_caption:
-        finalData.timeline?.find((t) => t.moment_index === i)
-          ?.social_caption || "Beautiful moment ✨",
-    }));
-    res.json({
+
+    const results = await Promise.all(scenePromises);
+
+    const scenes = results.filter(Boolean);
+
+    if (scenes.length === 0) {
+      return res.status(500).json({
+        success: false,
+        error: "Unable to analyze the photos",
+      });
+    }
+
+    // -----------------------------------------------------------
+    // CREATE STORY
+    // -----------------------------------------------------------
+
+    const storyPrompt = `
+Create a beautiful personal travel memory from these moments:
+
+${JSON.stringify(scenes)}
+
+Important:
+- Use the traveler's notes.
+- Connect the photos together like one journey.
+- Make it emotional and natural.
+- Do not make up events that are not present.
+- Do not make it sound like generic AI text.
+
+Return JSON only:
+
+{
+  "trip_title": "4-6 word beautiful travel title",
+
+  "travel_story": "Write a beautiful 5-7 paragraph travel diary.",
+
+  "timeline": [
+    {
+      "moment_index": 0,
+      "social_caption": "Natural Instagram caption with 3 hashtags"
+    }
+  ],
+
+  "tags": [
+    "tag1",
+    "tag2",
+    "tag3",
+    "tag4",
+    "tag5"
+  ],
+
+  "highlight_quote": "One memorable emotional line"
+}
+    `.trim();
+
+    const storyResponse =
+      await groq.chat.completions.create({
+        model: "openai/gpt-oss-120b",
+
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a professional travel diary writer. Return JSON only.",
+          },
+          {
+            role: "user",
+            content: storyPrompt,
+          },
+        ],
+
+        response_format: {
+          type: "json_object",
+        },
+
+        temperature: 0.7,
+        max_tokens: 2500,
+      });
+
+    const storyContent =
+      storyResponse?.choices?.[0]?.message?.content;
+
+    if (!storyContent) {
+      throw new Error("Story generation failed");
+    }
+
+    const finalData = JSON.parse(storyContent);
+
+    // -----------------------------------------------------------
+    // TIMELINE
+    // -----------------------------------------------------------
+
+    const timeline = scenes.map((scene, i) => {
+      const generated =
+        finalData.timeline?.find(
+          (item) =>
+            Number(item.moment_index) === scene.index
+        );
+
+      return {
+        ...scene,
+
+        social_caption:
+          generated?.social_caption ||
+          "Beautiful travel memory ✨ #Travel #Memory #Journey",
+      };
+    });
+
+    // -----------------------------------------------------------
+    // FINAL RESPONSE
+    // -----------------------------------------------------------
+
+    return res.json({
       success: true,
-      data: { ...finalData, timeline, created_at: new Date().toISOString() },
+
+      data: {
+        trip_title:
+          finalData.trip_title ||
+          "Memories From The Journey",
+
+        travel_story:
+          finalData.travel_story ||
+          "A beautiful journey filled with unforgettable moments.",
+
+        timeline,
+
+        tags:
+          finalData.tags || [
+            "travel",
+            "journey",
+            "memories",
+            "adventure",
+            "explore",
+          ],
+
+        highlight_quote:
+          finalData.highlight_quote ||
+          "The best journeys become our favorite memories.",
+
+        created_at:
+          new Date().toISOString(),
+      },
     });
   } catch (err) {
-    res.status(500).json({
+    console.error(
+      "❌ MEMORY BUILDER ERROR:",
+      err.response?.data || err.message
+    );
+
+    return res.status(500).json({
       success: false,
       error: "Memory builder failed",
-      details: err.message,
+      details:
+        err.response?.data ||
+        err.message,
     });
   }
 });
-
 // ═══════════════════════════════════════════════════════════════
 // CREATOMATE VIDEO
 // ═══════════════════════════════════════════════════════════════
