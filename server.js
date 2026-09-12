@@ -400,6 +400,43 @@ const translateText = async (
     throw err;
   }
 };
+// 📰  NEWS
+// // ═══════════════════════════════════════════════════════════════
+app.get("/api/startup-news", async (req, res) => {
+  const userQuery = req.query.q || "Travel";
+  try {
+    const response = await axios.get(
+      "https://real-time-news-data.p.rapidapi.com/search",
+      {
+        params: {
+          query: userQuery,
+          limit: 10,
+          time_published: "anytime",
+          country: "US",
+          lang: "en",
+        },
+        headers: {
+          "x-rapidapi-key": RAPID_API_KEY,
+          "x-rapidapi-host": "real-time-news-data.p.rapidapi.com",
+        },
+        timeout: 10000,
+      }
+    );
+    const formattedNews = (response.data.data || []).map((item) => ({
+      title: item.title,
+      summary: item.snippet || item.summary || "No summary available",
+      link: item.link,
+      published_date: item.published_datetime_utc || "",
+      image_url:
+        item.photo_url ||
+        item.thumbnail ||
+        "https://via.placeholder.com/400x200",
+    }));
+    res.json({ success: true, results: formattedNews });
+  } catch (err) {
+    handleError(res, 500, "News fetch failed", err.message);
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // SARVAM TEXT TO SPEECH
